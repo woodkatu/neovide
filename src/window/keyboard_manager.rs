@@ -61,9 +61,9 @@ impl KeyboardManager {
                 log::trace!("Ime commit {text}");
                 send_ui(SerialCommand::Keyboard(self.format_key_text(text, false)));
             }
-            WindowEvent::Ime(Ime::Preedit(text, cursor_offset)) => {
-                self.ime_preedit = (text.to_string(), *cursor_offset)
-            }
+            // WindowEvent::Ime(Ime::Preedit(text, cursor_offset)) => {
+            //     self.ime_preedit = (text.to_string(), *cursor_offset)
+            // }
             WindowEvent::ModifiersChanged(modifiers) => {
                 // Record the modifier states so that we can properly add them to the keybinding text
                 log::trace!("{:?}", *modifiers);

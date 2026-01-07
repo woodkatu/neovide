@@ -23,7 +23,9 @@ use crate::{
     bridge::{send_ui, ParallelCommand, SerialCommand},
     profiling::{tracy_frame, tracy_gpu_collect, tracy_gpu_zone, tracy_plot, tracy_zone},
     renderer::{
-        create_skia_renderer, DrawCommand, Renderer, RendererSettingsChanged, SkiaRenderer, VSync,
+        create_skia_renderer,
+        ime::{ImeState, Preedit},
+        DrawCommand, Renderer, RendererSettingsChanged, SkiaRenderer, VSync,
     },
     settings::{
         clamped_grid_size, Config, HotReloadConfigs, Settings, SettingsChanged, DEFAULT_GRID_SIZE,
@@ -92,8 +94,7 @@ pub struct WinitWindowWrapper {
     window_padding: WindowPadding,
     initial_window_size: WindowSize,
     is_minimized: bool,
-    ime_enabled: bool,
-    ime_area: (dpi::PhysicalPosition<u32>, dpi::PhysicalSize<u32>),
+    ime: ImeState,
     pub vsync: Option<VSync>,
     #[cfg(target_os = "macos")]
     pub macos_feature: Option<MacosWindowFeature>,
@@ -131,8 +132,7 @@ impl WinitWindowWrapper {
             initial_window_size,
             is_minimized: false,
             vsync: None,
-            ime_enabled: false,
-            ime_area: Default::default(),
+            ime: ImeState::new(),
             #[cfg(target_os = "macos")]
             macos_feature: None,
             settings,
@@ -400,12 +400,28 @@ impl WinitWindowWrapper {
             }
             WindowEvent::Ime(Ime::Enabled) => {
                 log::info!("Ime enabled");
-                self.ime_enabled = true;
+                self.ime.set_enabled(true);
                 self.update_ime_position(true);
             }
             WindowEvent::Ime(Ime::Disabled) => {
                 log::info!("Ime disabled");
-                self.ime_enabled = false;
+                self.ime.set_enabled(false);
+            }
+            WindowEvent::Ime(ime) => {
+                match ime {
+                    winit::event::Ime::Preedit(text, cursor_offset) => {
+                        let preedit = if text.is_empty() {
+                            None
+                        } else {
+                            Some(Preedit::new(text, cursor_offset.map(|offset| offset.0)))
+                        };
+    
+                        if self.ime.preedit() != preedit.as_ref() {
+                            self.ime.set_preedit(preedit);
+                        }
+                    }
+                    _ => {}
+                }
             }
             _ => {
                 tracy_zone!("Unknown WindowEvent");
@@ -444,7 +460,13 @@ impl WinitWindowWrapper {
         let skia_renderer = self.skia_renderer.as_mut().unwrap();
         let vsync = self.vsync.as_mut().unwrap();
 
-        self.renderer.draw_frame(skia_renderer.canvas(), dt);
+        if self.font_changed_last_frame {
+            self.font_changed_last_frame = false;
+            self.renderer.prepare_lines(true);
+        }
+        let w = skia_renderer.window().inner_size().width as f32;
+        self.renderer
+            .draw_frame(skia_renderer.canvas(), dt, &self.ime, w);
         skia_renderer.flush();
         {
             tracy_gpu_zone!("wait for vsync");
@@ -651,6 +673,8 @@ impl WinitWindowWrapper {
         if self.ui_state == UIState::Initing && handle_draw_commands_result.should_show {
             log::info!("Showing the Window");
             self.ui_state = UIState::WaitingForWindowCreate;
+            // Ensure that the window has the correct IME state
+            self.set_ime(self.ime.is_enabled());
         };
     }
 
@@ -835,7 +859,7 @@ impl WinitWindowWrapper {
     }
 
     fn update_ime_position(&mut self, force: bool) {
-        if !self.ime_enabled || self.skia_renderer.is_none() {
+        if !self.ime.is_enabled() || self.skia_renderer.is_none() {
             return;
         }
         let skia_renderer = self.skia_renderer.as_ref().unwrap();
@@ -854,8 +878,8 @@ impl WinitWindowWrapper {
         let height = font_dimensions.height.ceil() as u32;
         let size = dpi::PhysicalSize::new(width, height);
         let area = (position, size);
-        if force || self.ime_area != area {
-            self.ime_area = (position, size);
+        if force || self.ime.area() != area {
+            self.ime.set_area(position, size);
             skia_renderer.window().set_ime_cursor_area(position, size);
         }
     }

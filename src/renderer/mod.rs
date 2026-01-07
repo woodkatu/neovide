@@ -3,6 +3,7 @@ pub mod box_drawing;
 pub mod cursor_renderer;
 pub mod fonts;
 pub mod grid_renderer;
+pub mod ime;
 pub mod opengl;
 pub mod profiler;
 mod rendered_layer;
@@ -58,6 +59,7 @@ use crate::profiling::GpuCtx;
 use cursor_renderer::CursorRenderer;
 pub use fonts::caching_shaper::CachingShaper;
 pub use grid_renderer::GridRenderer;
+pub use ime::{ImeState, Preedit};
 pub use rendered_window::{LineFragment, RenderedWindow, WindowDrawCommand, WindowDrawDetails};
 
 pub use vsync::VSync;
@@ -212,7 +214,7 @@ impl Renderer {
         self.cursor_renderer.prepare_frame()
     }
 
-    pub fn draw_frame(&mut self, root_canvas: &Canvas, dt: f32) {
+    pub fn draw_frame(&mut self, root_canvas: &Canvas, dt: f32, ime: &ImeState, w: f32) {
         tracy_zone!("renderer_draw_frame");
         let window_settings = self.settings.get::<WindowSettings>();
         let opacity = if window_settings.normal_opacity < 1.0 {
@@ -324,7 +326,7 @@ impl Renderer {
             .chain(floating_window_regions)
             .collect();
         self.cursor_renderer
-            .draw(&mut self.grid_renderer, root_canvas);
+            .draw(&mut self.grid_renderer, root_canvas, ime.preedit(), w);
 
         self.profiler.draw(root_canvas, dt);
 
